@@ -1,0 +1,109 @@
+package com.example.jiotv
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import java.net.URL
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+data class Channel(val id: String, val name: String, val logoUrl: String, val streamUrl: String)
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                var selectedStream by remember { mutableStateOf<String?>(null) }
+                var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
+                var isLoading by remember { mutableStateOf(true) }
+                val scope = rememberCoroutineScope()
+
+                LaunchedEffect(Unit) {
+                    val m3uUrl = "https://iptv-org.github.io/iptv/countries/in.m3u"
+                    channels = fetchM3u(m3uUrl)
+                    isLoading = false
+                }
+
+                if (selectedStream != null) {
+                    ExoPlayerView(url = selectedStream!!, onBack = { selectedStream = null })
+                } else {
+                    if (isLoading) {
+                        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F0F0F)), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = Color(0xFFE31B23))
+                        }
+                    } else {
+                        Column(modifier = Modifier.fillMaxSize().background(Color(0xFF0F0F0F))) {
+                            Text("Jio TV+", color = Color(0xFFE31B23), modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.headlineLarge)
+                            LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.padding(8.dp)) {
+                                items(channels) { ch ->
+                                    Column(modifier = Modifier.padding(8.dp).clickable { selectedStream = ch.streamUrl }) {
+                                        AsyncImage(model = ch.logoUrl, contentDescription = ch.name, modifier = Modifier.size(100.dp))
+                                        Text(ch.name, color = Color.White, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@androidx.compose.runtime.Composable
+fun ExoPlayerView(url: String, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            prepare()
+            playWhenReady = true
+        }
+    }
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer } }, modifier = Modifier.fillMaxSize())
+        Button(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
+            Text("Back")
+        }
+    }
+}
+
+suspend fun fetchM3u(urlString: String): List<Channel> = withContext(Dispatchers.IO) {
+    val list = mutableListOf<Channel>()
+    try {
+        val content = URL(urlString).readText()
+        var name = ""
+        var logo = ""
+        for (line in content.lines()) {
+            if (line.startsWith("#EXTINF:")) {
+                logo = Regex("tvg-logo=\"(.*?)\"").find(line)?.groupValues?.get(1) ?: ""
+                name = line.substringAfter(",").trim()
+            } else if (line.startsWith("http") && name.isNotEmpty()) {
+                list.add(Channel(list.size.toString(), name, logo, line.trim()))
+                name = ""
+                logo = ""
+            }
+        }
+    } catch (e: Exception) { e.printStackTrace() }
+    return@withContext list
+}
